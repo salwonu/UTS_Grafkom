@@ -36,7 +36,7 @@
 <div id="overlay"><h1 id="title">METEOR DEFENSE</h1>
   <p id="msg">Pertahankan planet dari 5 wave meteor. Tembak untuk dapat credits, upgrade turret di bengkel antar wave, gunakan shield dan EMP, lalu kalahkan boss di wave terakhir. Meteor ungu pecah jadi dua, meteor biru sangat cepat.</p>
   <button id="btn">Mulai</button>
-  <small id="ac" style="margin-top:22px;opacity:.6;max-width:560px;line-height:1.5">Asset Credits: Three.js (MIT License) &middot; Model turret: [JUDUL MODEL] oleh [PEMBUAT], lisensi [CC0 / CC-BY], sumber: [LINK] &mdash; ganti teks ini sesuai asset yang dipakai.</small></div>
+  </div>
 
 <script type="module">
 import * as THREE from 'three';
@@ -125,14 +125,13 @@ const dome = new THREE.Mesh(new THREE.SphereGeometry(0.4, 24, 16), metal); dome.
 const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.12, 1.2, 16), metal);
 barrel.rotation.x = Math.PI / 2; barrel.position.z = 0.6; barrel.castShadow = true; fallback.add(barrel);
 
-// Asset GLB: letakkan di assets/turret.glb (jika tidak ada, turret prosedural tetap dipakai)
 new GLTFLoader().load('assets/turret.glb', gltf => {
   const m = gltf.scene;
   const size = new THREE.Box3().setFromObject(m).getSize(new THREE.Vector3());
   m.scale.setScalar(1.4 / Math.max(size.x, size.y, size.z));
   m.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; if (o.material && !Array.isArray(o.material)) { o.material.envMap = envTex; o.material.envMapIntensity = 0.7; o.material.needsUpdate = true; } } });
   fallback.visible = false; head.add(m);
-}, undefined, () => console.warn('assets/turret.glb tidak ditemukan, memakai turret prosedural.'));
+}, undefined, () => console.warn);
 
 // Shield
 const shield = new THREE.Mesh(new THREE.SphereGeometry(R + 1.6, 40, 28),
