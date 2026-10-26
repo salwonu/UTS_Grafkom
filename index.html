@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Meteor Defense</title>
+<style>
+  html,body{margin:0;height:100%;overflow:hidden;background:#02030a;font-family:system-ui,sans-serif;color:#dff}
+  canvas{display:block}
+  #hud{position:fixed;top:14px;left:14px;width:260px;pointer-events:none;font-size:14px;text-shadow:0 0 6px #08f}
+  .bar{height:12px;background:#0a1a2a;border:1px solid #4af;margin:4px 0 10px;border-radius:6px;overflow:hidden}
+  .bar>i{display:block;height:100%;width:100%;transition:width .15s}
+  #hp>i{background:linear-gradient(90deg,#f33,#fa3)} #en>i{background:linear-gradient(90deg,#08f,#4ff)}
+  #help{position:fixed;bottom:12px;left:50%;transform:translateX(-50%);font-size:13px;opacity:.7;pointer-events:none}
+  #overlay{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;background:rgba(2,3,10,.82);text-align:center}
+  #overlay h1{font-size:44px;margin:0 0 8px;text-shadow:0 0 20px #4af} #overlay p{max-width:480px;opacity:.85;line-height:1.5}
+  button{margin-top:18px;padding:12px 32px;font-size:18px;border:2px solid #4ff;background:#0a2a44;color:#dff;border-radius:8px;cursor:pointer}
+  button:hover{background:#0f4a77}
+  #emp>i{background:linear-gradient(90deg,#a3f,#f6f)}
+  #toast{position:fixed;top:18%;left:50%;transform:translateX(-50%);font-size:26px;letter-spacing:2px;opacity:0;transition:opacity .4s;pointer-events:none;text-shadow:0 0 12px #4ff}
+  #shop{position:fixed;right:14px;top:14px;width:260px;display:none;flex-direction:column;gap:6px;background:rgba(5,15,30,.9);border:1px solid #4af;border-radius:10px;padding:12px}
+  #shop button{margin:0;padding:8px;font-size:14px;text-align:left}
+</style>
+<script type="importmap">
+{"imports":{"three":"https://unpkg.com/three@0.160.0/build/three.module.js","three/addons/":"https://unpkg.com/three@0.160.0/examples/jsm/"}}
+</script>
+</head>
+<body>
+<div id="hud">
+  <div>Wave: <b id="wave">1</b>/5 &nbsp; Skor: <b id="score">0</b></div><div>Credits: <b id="cr">0</b> &nbsp; Combo: <b id="cb">-</b></div>
+  <div id="obj" style="color:#ffe27a;margin:0 0 8px">Tujuan: bertahan 5 wave &amp; kalahkan boss</div><div>Integritas Planet</div><div class="bar" id="hp"><i></i></div>
+  <div>Energi Shield</div><div class="bar" id="en"><i></i></div><div>EMP Shockwave [E]</div><div class="bar" id="emp"><i></i></div><div id="bf" style="color:#ffe27a;min-height:18px"></div>
+</div>
+<div id="help">Klik meteor = tembak &middot; SPASI (tahan) = shield &middot; E = EMP &middot; Scroll = zoom &middot; Tembak satelit &amp; ambil orb power-up</div>
+<div id="shop"></div><div id="toast"></div>
+<div id="overlay"><h1 id="title">METEOR DEFENSE</h1>
+  <p id="msg">Pertahankan planet dari 5 wave meteor. Tembak untuk dapat credits, upgrade turret di bengkel antar wave, gunakan shield dan EMP, lalu kalahkan boss di wave terakhir. Meteor ungu pecah jadi dua, meteor biru sangat cepat.</p>
+  <button id="btn">Mulai</button>
+  <small id="ac" style="margin-top:22px;opacity:.6;max-width:560px;line-height:1.5">Asset Credits: Three.js (MIT License) &middot; Model turret: [JUDUL MODEL] oleh [PEMBUAT], lisensi [CC0 / CC-BY], sumber: [LINK] &mdash; ganti teks ini sesuai asset yang dipakai.</small></div>
+
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+
+const R = 5, WAVES = [6, 9, 13, 17, 12];
+const rand = (a, b) => a + Math.random() * (b - a);
+const $ = id => document.getElementById(id);
+
+// ---------- Renderer, scene, camera ----------
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+document.body.prepend(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x02030a);
+scene.fog = new THREE.FogExp2(0x02030a, 0.012);
+const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, 200);
+camera.position.set(0, 5, 17);
+
+// Environment map hanya untuk material logam (supaya ada pantulan, planet/bulan tidak ikut terang)
+const pmrem = new THREE.PMREMGenerator(renderer);
+const envTex = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+
+// ---------- Lights ----------
+scene.add(new THREE.AmbientLight(0x334466, 0.6));
+const sun = new THREE.DirectionalLight(0xfff2dd, 3);
+sun.position.set(12, 14, 10);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+Object.assign(sun.shadow.camera, { left: -14, right: 14, top: 14, bottom: -14, near: 1, far: 50 });
+sun.shadow.bias = -0.0005; sun.shadow.normalBias = 0.05;
+scene.add(sun);
+const rim = new THREE.PointLight(0x3388ff, 80, 60);
+rim.position.set(-12, -4, -8);
+scene.add(rim);
+
+// ---------- Environment: starfield ----------
+const starGeo = new THREE.BufferGeometry();
+const sp = new Float32Array(1800 * 3);
+for (let i = 0; i < 1800; i++) {
+  const v = new THREE.Vector3().randomDirection().multiplyScalar(rand(70, 120));
+  sp.set([v.x, v.y, v.z], i * 3);
+}
+starGeo.setAttribute('position', new THREE.BufferAttribute(sp, 3));
+const stars = new THREE.Points(starGeo, new THREE.PointsMaterial({ size: 0.45, color: 0xcfe0ff, fog: false }));
+scene.add(stars);
+
+// ---------- Planet (scene graph: station -> planet -> atmosphere; station -> turret -> head) ----------
+const station = new THREE.Group();
+scene.add(station);
+
+const cv = document.createElement('canvas'); cv.width = 512; cv.height = 256;
+const cx = cv.getContext('2d');
+cx.fillStyle = '#1b5fa8'; cx.fillRect(0, 0, 512, 256);
+for (let i = 0; i < 60; i++) {
+  cx.fillStyle = Math.random() < 0.8 ? '#3f8a4a' : '#c9b98a';
+  cx.beginPath(); cx.ellipse(rand(0, 512), rand(20, 236), rand(12, 55), rand(8, 28), rand(0, 3), 0, 6.3); cx.fill();
+}
+const planetTex = new THREE.CanvasTexture(cv);
+planetTex.colorSpace = THREE.SRGBColorSpace;
+const planet = new THREE.Mesh(new THREE.SphereGeometry(R, 64, 48),
+  new THREE.MeshStandardMaterial({ map: planetTex, roughness: 0.85, metalness: 0.05 }));
+planet.receiveShadow = true; planet.castShadow = true;
+station.add(planet);
+
+const atmo = new THREE.Mesh(new THREE.SphereGeometry(R * 1.06, 48, 32),
+  new THREE.MeshBasicMaterial({ color: 0x55aaff, transparent: true, opacity: 0.18, blending: THREE.AdditiveBlending, depthWrite: false }));
+planet.add(atmo);
+
+// Turret
+const turret = new THREE.Group();
+turret.position.set(0, R, 0);
+station.add(turret);
+const metal = new THREE.MeshStandardMaterial({ color: 0x9aa7b5, metalness: 0.9, roughness: 0.3, envMap: envTex, envMapIntensity: 0.7 });
+const base = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.65, 0.4, 24), metal);
+base.castShadow = true; base.receiveShadow = true; turret.add(base);
+const head = new THREE.Group(); head.position.y = 0.4; turret.add(head);
+const fallback = new THREE.Group(); head.add(fallback);
+const dome = new THREE.Mesh(new THREE.SphereGeometry(0.4, 24, 16), metal); dome.castShadow = true; fallback.add(dome);
+const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.12, 1.2, 16), metal);
+barrel.rotation.x = Math.PI / 2; barrel.position.z = 0.6; barrel.castShadow = true; fallback.add(barrel);
+
+// Asset GLB: letakkan di assets/turret.glb (jika tidak ada, turret prosedural tetap dipakai)
+new GLTFLoader().load('assets/turret.glb', gltf => {
+  const m = gltf.scene;
+  const size = new THREE.Box3().setFromObject(m).getSize(new THREE.Vector3());
+  m.scale.setScalar(1.4 / Math.max(size.x, size.y, size.z));
+  m.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; if (o.material && !Array.isArray(o.material)) { o.material.envMap = envTex; o.material.envMapIntensity = 0.7; o.material.needsUpdate = true; } } });
+  fallback.visible = false; head.add(m);
+}, undefined, () => console.warn('assets/turret.glb tidak ditemukan, memakai turret prosedural.'));
+
+// Shield
+const shield = new THREE.Mesh(new THREE.SphereGeometry(R + 1.6, 40, 28),
+  new THREE.MeshStandardMaterial({ color: 0x33aaff, emissive: 0x2288ff, emissiveIntensity: 1.5, transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide }));
+station.add(shield);
+
+// ---------- Moon (parent pivot -> moon) & asteroid belt ----------
+const moonPivot = new THREE.Group(); scene.add(moonPivot);
+const moon = new THREE.Mesh(new THREE.SphereGeometry(1.1, 32, 24), new THREE.MeshStandardMaterial({ color: 0xaaa6a0, roughness: 1 }));
+moon.position.set(10, 1.5, 0); moon.castShadow = moon.receiveShadow = true; moonPivot.add(moon);
+const belt = new THREE.InstancedMesh(new THREE.DodecahedronGeometry(0.25), new THREE.MeshStandardMaterial({ color: 0x7a6e62, roughness: 0.95, flatShading: true }), 220);
+const dm = new THREE.Object3D();
+for (let i = 0; i < 220; i++) {
+  const a = rand(0, 6.28), rr = rand(11, 14);
+  dm.position.set(Math.cos(a) * rr, rand(-0.8, 0.8), Math.sin(a) * rr); dm.rotation.set(rand(0, 6), rand(0, 6), 0); dm.scale.setScalar(rand(0.4, 1.6));
+  dm.updateMatrix(); belt.setMatrixAt(i, dm.matrix);
+}
+belt.castShadow = true; belt.rotation.x = 0.45; scene.add(belt);
+
+// ---------- Game state ----------
+let state = 'ready', health = 100, energy = 100, score = 0, wave = 0;
+let credits = 0, dmg = 1, cd = 0.35, maxEn = 100, combo = 0, comboT = 0, fireT = 0, empT = 0, camZ = 17;
+const rings = [], lv = [0, 0, 0, 0], sats = [], orbs = [], chunks = [], buff = { slow: 0, rapid: 0, triple: 0, over: 0 }, mp = new THREE.Vector3();
+let satT = 6;
+let toSpawn = 0, spawnT = 0, breakT = 0, shieldOn = false;
+const meteors = [], fx = [], lasers = [];
+const rockMat = new THREE.MeshStandardMaterial({ color: 0x6b5a4c, roughness: 0.95, metalness: 0.05, emissive: 0x331100, emissiveIntensity: 0.4, flatShading: true });
+
+function makeMeteor(boss = false, pos = null, small = false) {
+  const q = Math.random();
+  const k = boss ? 'boss' : small ? 'small' : q < 0.2 ? 'fast' : q < 0.4 ? 'split' : q < 0.6 ? 'big' : 'normal';
+  const big = k === 'big' || k === 'boss', r = { boss: 2.6, big: 0.95, split: 0.8, fast: 0.35, small: 0.3, normal: 0.55 }[k];
+  const g = new THREE.IcosahedronGeometry(r, 1);
+  const p = g.attributes.position;
+  for (let i = 0; i < p.count; i++) {
+    const v = new THREE.Vector3().fromBufferAttribute(p, i).multiplyScalar(rand(0.8, 1.15));
+    p.setXYZ(i, v.x, v.y, v.z);
+  }
+  g.computeVertexNormals();
+  const m = new THREE.Mesh(g, rockMat.clone());
+  m.castShadow = true; m.receiveShadow = true;
+  m.position.copy(pos || new THREE.Vector3(rand(-1, 1), rand(-0.1, 1), rand(-0.2, 0.35)).normalize().multiplyScalar(34));
+  const target = new THREE.Vector3().randomDirection().multiplyScalar(R * 0.5);
+  const T = { boss: [0x8a3a28, 0x551100], fast: [0x5a6a88, 0x112244], split: [0x7a4a6a, 0x330044] }[k] || [0x6b5a4c, 0x331100];
+  m.material.color.setHex(T[0]); m.material.emissive.setHex(T[1]);
+  m.userData = {
+    hp: { boss: 25, big: 3, split: 2 }[k] || 1, big, r, boss, split: k === 'split', em: T[1],
+    dmg: { boss: 40, big: 15, split: 12 }[k] || 8,
+    vel: target.sub(m.position).normalize().multiplyScalar((rand(2.5, 4) + wave * 0.5) * ({ boss: 0.5, fast: 2 }[k] || 1)),
+    spin: new THREE.Vector3(rand(-1, 1), rand(-1, 1), rand(-1, 1))
+  };
+  // trail
+  const trail = new THREE.Mesh(new THREE.ConeGeometry(r * 0.6, r * 4, 12, 1, true),
+    new THREE.MeshBasicMaterial({ color: 0xff7722, transparent: true, opacity: 0.35, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
+  trail.position.copy(m.userData.vel).normalize().multiplyScalar(-r * 2.2);
+  trail.quaternion.setFromUnitVectors(new THREE.Vector3(0, -1, 0), m.userData.vel.clone().normalize());
+  trail.userData.isTrail = true;
+  m.add(trail);
+  scene.add(m); meteors.push(m);
+}
+
+// ---------- VFX ----------
+// Pool light: jumlah light konstan -> tidak ada recompile shader saat ledakan
+const lightPool = Array.from({ length: 4 }, () => { const l = new THREE.PointLight(0xffffff, 0, 12); l.userData.busy = false; scene.add(l); return l; });
+function boom(pos, color = 0xffaa33, n = 60) {
+  const g = new THREE.BufferGeometry();
+  const arr = new Float32Array(n * 3), vel = [];
+  for (let i = 0; i < n; i++) { arr.set([pos.x, pos.y, pos.z], i * 3); vel.push(new THREE.Vector3().randomDirection().multiplyScalar(rand(2, 8))); }
+  g.setAttribute('position', new THREE.BufferAttribute(arr, 3));
+  const pts = new THREE.Points(g, new THREE.PointsMaterial({ color, size: 0.3, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }));
+  pts.frustumCulled = false; pts.userData = { vel, life: 0 };
+  const light = lightPool.find(l => !l.userData.busy) || null;
+  if (light) { light.userData.busy = true; light.color.setHex(color); light.position.copy(pos); light.intensity = 40; }
+  pts.userData.light = light;
+  scene.add(pts); fx.push(pts);
+}
+function laser(from, to) {
+  const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints([from, to]),
+    new THREE.LineBasicMaterial({ color: 0x66ffee, transparent: true }));
+  scene.add(line); lasers.push({ line, t: 0 });
+}
+
+// ---------- Interaction ----------
+const ray = new THREE.Raycaster(), ndc = new THREE.Vector2();
+let hovered = null, target = new THREE.Vector3(0, 20, 0), px = 0;
+function setNdc(e) { ndc.set(e.clientX / innerWidth * 2 - 1, -(e.clientY / innerHeight) * 2 + 1); px = ndc.x; }
+function pick() {
+  ray.setFromCamera(ndc, camera);
+  const hit = ray.intersectObjects([...meteors, ...sats, ...orbs], false)[0];
+  if (hit) return hit;
+  // Aim assist: toleransi klik di sekitar meteor/orb kecil
+  let best = null, bd = 1e9;
+  for (const m of [...meteors, ...orbs]) {
+    const d = ray.ray.distanceToPoint(m.position), lim = (m.userData.r || 0.7) * 1.8 + 0.25;
+    if (d < lim && d < bd) { bd = d; best = m; }
+  }
+  return best ? { object: best, point: best.position.clone() } : null;
+}
+
+addEventListener('pointermove', e => {
+  setNdc(e);
+  const hit = state === 'playing' ? pick() : null;
+  if (hovered && hovered !== hit?.object) hovered.material.emissive.setHex(hovered.userData.em);
+  hovered = hit ? hit.object : null;
+  if (hovered) hovered.material.emissive.setHex(0xff2200);
+  renderer.domElement.style.cursor = hovered ? 'crosshair' : 'default';
+});
+addEventListener('pointerdown', e => {
+  if (state !== 'playing' || fireT > 0 || e.target.closest('button')) return;
+  fireT = buff.rapid > 0 ? cd * 0.4 : cd;
+  setNdc(e);
+  const hit = pick();
+  const muzzle = head.localToWorld(new THREE.Vector3(0, 0, 1.2));
+  const end = hit ? hit.point.clone() : ray.ray.at(25, new THREE.Vector3());
+  target.copy(end); laser(muzzle, end);
+  if (hit) {
+    const m = hit.object, u = m.userData;
+    if (u.orb) { collect(m); return; }
+    u.hp -= dmg; boom(hit.point, 0x66ffee, 15);
+    if (u.hp <= 0) u.sat ? breakSat(m) : destroy(m, true);
+  }
+  if (buff.triple > 0) meteors.filter(x => x !== hit?.object).sort((a, b) => a.position.distanceTo(end) - b.position.distanceTo(end)).slice(0, 2).forEach(x => { laser(muzzle, x.position); x.userData.hp -= dmg; boom(x.position, 0x66ffee, 12); if (x.userData.hp <= 0) destroy(x, true); });
+});
+addEventListener('keydown', e => {
+  if (e.code === 'Space') { shieldOn = true; e.preventDefault(); }
+  if (e.code === 'KeyE' && state === 'playing' && empT <= 0) emp();
+  if (state === 'shop') { if (e.code === 'Enter') nextWave(); else if (/^[1-4]$/.test(e.key)) buy(+e.key - 1); }
+});
+addEventListener('wheel', e => { camZ = Math.min(24, Math.max(12, camZ + e.deltaY * 0.01)); });
+addEventListener('keyup', e => { if (e.code === 'Space') shieldOn = false; });
+
+function destroy(m, scored) {
+  const u = m.userData;
+  boom(m.position, 0xffaa33, u.boss ? 200 : u.big ? 90 : 55); debris(m.position, u.boss ? 12 : u.big ? 6 : 3);
+  if (scored) {
+    combo++; comboT = 3;
+    score += Math.round((u.boss ? 200 : u.big ? 30 : 10) * (1 + Math.floor(combo / 5) * 0.5));
+    credits += u.boss ? 100 : u.big ? 12 : 5; $('score').textContent = score;
+    if (u.boss || Math.random() < 0.1) dropOrb(m.position);
+    if (u.split) for (let i = 0; i < 2; i++) makeMeteor(false, m.position.clone().add(new THREE.Vector3().randomDirection().multiplyScalar(0.8)), true);
+  }
+  scene.remove(m); m.geometry.dispose(); m.material.dispose(); m.children.forEach(c => { c.geometry.dispose(); c.material.dispose(); });
+  meteors.splice(meteors.indexOf(m), 1);
+  if (hovered === m) hovered = null;
+}
+
+// ---------- Flow ----------
+function startWave() {
+  wave++; toSpawn = WAVES[wave - 1]; spawnT = 1; $('wave').textContent = wave;
+  $('obj').textContent = wave === WAVES.length ? 'Tujuan: hancurkan BOSS & bertahan!' : 'Tujuan: bertahan dari wave ' + wave + '/' + WAVES.length;
+  if (wave === WAVES.length) makeMeteor(true);
+}
+function clearTransient() {
+  for (const p of fx) { if (p.userData.light) { p.userData.light.intensity = 0; p.userData.light.userData.busy = false; } scene.remove(p); p.geometry.dispose(); p.material.dispose(); }
+  fx.length = 0;
+  for (const c of chunks) scene.remove(c); chunks.length = 0;
+  for (const l of lasers) { scene.remove(l.line); l.line.geometry.dispose(); l.line.material.dispose(); } lasers.length = 0;
+  for (const r of rings) { scene.remove(r.mesh); r.mesh.geometry.dispose(); r.mesh.material.dispose(); } rings.length = 0;
+  breakT = 0; satT = 6;
+}
+function reset() {
+  [...meteors].forEach(m => destroy(m, false)); clearTransient();
+  health = 100; maxEn = 100; energy = 100; score = 0; wave = 0; credits = 0; dmg = 1; cd = 0.35; combo = 0; empT = 0; fireT = 0; lv.fill(0);
+  $('score').textContent = 0; $('shop').style.display = 'none';
+  sats.forEach(x => scene.remove(x)); sats.length = 0; orbs.forEach(x => scene.remove(x)); orbs.length = 0; for (const k in buff) buff[k] = 0;
+  startWave(); state = 'playing'; $('overlay').style.display = 'none';
+}
+function end(win) {
+  state = win ? 'won' : 'lost';
+  $('title').textContent = win ? 'MENANG!' : 'PLANET HANCUR';
+  $('msg').textContent = (win ? 'Semua 5 gelombang meteor berhasil dihentikan. ' : 'Planet tidak mampu bertahan. ') + 'Skor akhir: ' + score;
+  $('btn').textContent = 'Main Lagi';
+  $('overlay').style.display = 'flex';
+}
+const UP = [
+  { n: 'Damage +1', cost: l => 40 + 30 * l, f: () => dmg++ },
+  { n: 'Fire Rate +25%', cost: l => 30 + 25 * l, f: () => cd *= 0.75 },
+  { n: 'Kapasitas Shield +30', cost: l => 25 + 20 * l, f: () => maxEn += 30 },
+  { n: 'Perbaiki Planet +30', cost: l => 20, f: () => health = Math.min(100, health + 30) }
+];
+function renderShop() {
+  $('shop').innerHTML = '<b>BENGKEL &mdash; Credits: ' + credits + '</b>' +
+    UP.map((u, i) => '<button data-i="' + i + '">[' + (i + 1) + '] ' + u.n + ' &mdash; ' + u.cost(lv[i]) + '</button>').join('') +
+    '<button id="go">Lanjut Wave (Enter)</button>';
+}
+function buy(i) {
+  const u = UP[i];
+  if (u && credits >= u.cost(lv[i])) { credits -= u.cost(lv[i]); u.f(); lv[i]++; boom(new THREE.Vector3(0, R + 1, 0), 0x66ffcc, 30); renderShop(); }
+}
+function openShop() { state = 'shop'; energy = maxEn; renderShop(); $('shop').style.display = 'flex'; }
+function nextWave() { $('shop').style.display = 'none'; state = 'playing'; startWave(); }
+$('shop').onclick = e => { const b = e.target.closest('button'); if (!b) return; b.id === 'go' ? nextWave() : buy(+b.dataset.i); };
+function emp() {
+  empT = 15;
+  const mesh = new THREE.Mesh(new THREE.SphereGeometry(1, 32, 20), new THREE.MeshBasicMaterial({ color: 0xcc66ff, transparent: true, opacity: 0.5, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
+  scene.add(mesh); rings.push({ mesh, t: 0 });
+  for (const m of [...meteors]) if (m.position.length() < 24) { m.userData.hp -= 4; boom(m.position, 0xcc66ff, 25); if (m.userData.hp <= 0) destroy(m, true); }
+}
+const PU = { slow: [0x44aaff, 'Slow-Mo'], rapid: [0xffdd33, 'Rapid Fire'], triple: [0x33ffcc, 'Triple Shot'], repair: [0x44ff66, 'Repair'], nova: [0xff4444, 'Nova Bomb'], over: [0xcc66ff, 'Overcharge Shield'] };
+function toast(t) { const e = $('toast'); e.textContent = t; e.style.opacity = 1; clearTimeout(toast.h); toast.h = setTimeout(() => e.style.opacity = 0, 1300); }
+const chunkGeo = new THREE.TetrahedronGeometry(0.18);
+function debris(p, n) {
+  for (let i = 0; i < n; i++) {
+    const c = new THREE.Mesh(chunkGeo, rockMat); c.position.copy(p); c.castShadow = true;
+    c.userData = { v: new THREE.Vector3().randomDirection().multiplyScalar(rand(2, 5)), s: new THREE.Vector3(rand(-6, 6), rand(-6, 6), rand(-6, 6)), life: rand(1.2, 2.2) };
+    scene.add(c); chunks.push(c);
+  }
+}
+function makeSat() {
+  const body = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.9, 1.3), new THREE.MeshStandardMaterial({ color: 0xc8ccd4, metalness: 0.85, roughness: 0.35, emissive: 0x112233, envMap: envTex, envMapIntensity: 0.7 }));
+  body.castShadow = true;
+  const pm = new THREE.MeshStandardMaterial({ color: 0x1a3b8a, metalness: 0.6, roughness: 0.25, emissive: 0x0a1a44, envMap: envTex, envMapIntensity: 0.7 });
+  [-1, 1].forEach(d => { const w = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.05, 0.9), pm); w.position.x = d * 1.4; w.castShadow = true; body.add(w); });
+  const dish = new THREE.Mesh(new THREE.ConeGeometry(0.3, 0.3, 16), metal); dish.position.y = 0.6; body.add(dish);
+  body.userData = { sat: true, hp: 2, em: 0x112233, a: rand(0, 6.28), rad: rand(8.5, 11), inc: rand(-0.5, 0.5), w: rand(0.25, 0.4) * (Math.random() < 0.5 ? -1 : 1), life: 25 };
+  scene.add(body); sats.push(body);
+}
+function breakSat(m) {
+  boom(m.position, 0xffee88, 70); debris(m.position, 8); dropOrb(m.position); credits += 10;
+  scene.remove(m); sats.splice(sats.indexOf(m), 1); if (hovered === m) hovered = null; toast('SATELIT HANCUR');
+}
+function dropOrb(pos, kind) {
+  kind = kind || Object.keys(PU)[Math.floor(Math.random() * 6)];
+  const c = PU[kind][0];
+  const o = new THREE.Mesh(new THREE.IcosahedronGeometry(0.7, 1), new THREE.MeshStandardMaterial({ color: c, emissive: c, emissiveIntensity: 1.2, roughness: 0.2, metalness: 0.3 }));
+  o.add(new THREE.Mesh(new THREE.SphereGeometry(1.1, 16, 12), new THREE.MeshBasicMaterial({ color: c, transparent: true, opacity: 0.25, blending: THREE.AdditiveBlending, depthWrite: false })));
+  o.position.copy(pos); if (o.position.length() > 12) o.position.setLength(12);
+  o.userData = { orb: true, kind, em: c, life: 9, y0: o.position.y };
+  scene.add(o); orbs.push(o);
+}
+function collect(o) {
+  const k = o.userData.kind;
+  if (k === 'repair') health = Math.min(100, health + 25);
+  else if (k === 'nova') for (const m of [...meteors]) { m.userData.hp -= m.userData.boss ? 5 : 99; boom(m.position, 0xff4444, 30); if (m.userData.hp <= 0) destroy(m, true); }
+  else { buff[k] = 7; if (k === 'over') energy = maxEn; }
+  boom(o.position, PU[k][0], 50); toast(PU[k][1].toUpperCase() + '!');
+  scene.remove(o); orbs.splice(orbs.indexOf(o), 1); if (hovered === o) hovered = null;
+}
+$('btn').onclick = reset;
+
+// ---------- Loop ----------
+const clock = new THREE.Clock();
+const tmp = new THREE.Vector3();
+function loop() {
+  requestAnimationFrame(loop);
+  const rdt = Math.min(clock.getDelta(), 0.05), dt = rdt * (buff.slow > 0 ? 0.4 : 1), t = clock.elapsedTime;
+
+  planet.rotation.y += dt * 0.12;
+  stars.rotation.y += dt * 0.004;
+  atmo.material.opacity = 0.16 + Math.sin(t * 2) * 0.03;
+  camera.position.x += (px * 3 - camera.position.x) * 0.04;
+  camera.position.y += (5 - camera.position.y) * 0.05; camera.position.z += (camZ - camera.position.z) * 0.1;
+  camera.lookAt(0, 1, 0);
+
+  // turret aiming
+  tmp.copy(target); head.lookAt(tmp);
+
+  if (state === 'playing') {
+    fireT -= rdt; empT -= rdt; comboT -= rdt; for (const k in buff) buff[k] -= rdt; if (comboT <= 0) combo = 0;
+    // spawn
+    if (toSpawn > 0) {
+      spawnT -= dt;
+      if (spawnT <= 0) { makeMeteor(); toSpawn--; spawnT = Math.max(0.5, 2.2 - wave * 0.3) * rand(0.7, 1.2); }
+    } else if (meteors.length === 0) {
+      breakT += dt;
+      if (breakT > 2) { breakT = 0; wave >= WAVES.length ? end(true) : openShop(); }
+    }
+    // shield energy
+    if (shieldOn && energy > 0) energy = buff.over > 0 ? energy : Math.max(0, energy - 25 * dt);
+    else energy = Math.min(maxEn, energy + 10 * dt);
+    const active = shieldOn && energy > 0;
+    shield.material.opacity += ((active ? 0.22 : 0) - shield.material.opacity) * 0.2;
+    shield.rotation.y += dt;
+
+    // meteors
+    moon.getWorldPosition(mp);
+    for (const m of [...meteors]) {
+      m.position.addScaledVector(m.userData.vel, dt);
+      m.rotation.x += m.userData.spin.x * dt; m.rotation.y += m.userData.spin.y * dt;
+      const d = m.position.length();
+      if (!m.userData.boss && m.position.distanceTo(mp) < 1.2 + m.userData.r) { boom(m.position, 0xaaaaaa, 40); destroy(m, false); continue; }
+      if (active && !m.userData.boss && d < R + 1.6 + m.userData.r) {
+        shield.material.opacity = 0.7; boom(m.position, 0x44aaff, 40); destroy(m, false); score += 3; $('score').textContent = score;
+      } else if (d < R + m.userData.r * 0.8) {
+        health -= m.userData.dmg; combo = 0;
+        boom(m.position, 0xff4411, 80); destroy(m, false);
+        camera.position.y += rand(-0.4, 0.4);
+        if (health <= 0) { health = 0; end(false); }
+      }
+    }
+  }
+
+  for (const s of [...rings]) { s.t += dt; s.mesh.scale.setScalar(R + s.t * 40); s.mesh.material.opacity = Math.max(0, 0.5 - s.t * 0.7); if (s.t > 0.75) { scene.remove(s.mesh); s.mesh.geometry.dispose(); rings.splice(rings.indexOf(s), 1); } }
+  moonPivot.rotation.y += dt * 0.15; moon.rotation.y += dt * 0.3; belt.rotation.y += dt * 0.02;
+  if (state === 'playing') { satT -= dt; if (satT <= 0 && sats.length < 2) { makeSat(); satT = rand(10, 16); } }
+  for (const x of [...sats]) {
+    const u = x.userData; u.a += u.w * dt; u.life -= dt; x.rotation.y += dt; x.rotation.x += dt * 0.3;
+    x.position.set(Math.cos(u.a) * u.rad, 1 + Math.sin(u.a) * u.rad * Math.sin(u.inc), Math.sin(u.a) * u.rad * Math.cos(u.inc));
+    if (u.life <= 0) { scene.remove(x); sats.splice(sats.indexOf(x), 1); if (hovered === x) hovered = null; }
+  }
+  for (const o of [...orbs]) {
+    const u = o.userData; u.life -= dt; o.rotation.y += dt * 2; o.position.y = u.y0 + Math.sin(t * 3 + u.y0) * 0.3;
+    o.scale.setScalar(u.life < 2 ? Math.max(0.01, u.life / 2) : 1);
+    if (u.life <= 0) { scene.remove(o); orbs.splice(orbs.indexOf(o), 1); if (hovered === o) hovered = null; }
+  }
+  for (const c of [...chunks]) {
+    const u = c.userData; u.life -= dt; c.position.addScaledVector(u.v, dt); c.rotation.x += u.s.x * dt; c.rotation.y += u.s.y * dt; c.scale.setScalar(Math.max(0.01, Math.min(1, u.life)));
+    if (u.life <= 0) { scene.remove(c); chunks.splice(chunks.indexOf(c), 1); }
+  }
+  // fx
+  for (const p of [...fx]) {
+    const u = p.userData; u.life += dt;
+    const a = p.geometry.attributes.position;
+    u.vel.forEach((v, i) => a.setXYZ(i, a.getX(i) + v.x * dt, a.getY(i) + v.y * dt, a.getZ(i) + v.z * dt));
+    a.needsUpdate = true;
+    p.material.opacity = Math.max(0, 1 - u.life / 0.9);
+    if (u.light) u.light.intensity = 40 * p.material.opacity;
+    if (u.life > 0.9) { if (u.light) { u.light.intensity = 0; u.light.userData.busy = false; } scene.remove(p); p.geometry.dispose(); p.material.dispose(); fx.splice(fx.indexOf(p), 1); }
+  }
+  for (const l of [...lasers]) {
+    l.t += dt; l.line.material.opacity = 1 - l.t / 0.15;
+    if (l.t > 0.15) { scene.remove(l.line); l.line.geometry.dispose(); l.line.material.dispose(); lasers.splice(lasers.indexOf(l), 1); }
+  }
+
+  $('hp').firstElementChild.style.width = health + '%';
+  $('en').firstElementChild.style.width = energy / maxEn * 100 + '%';
+  $('emp').firstElementChild.style.width = Math.max(0, 1 - empT / 15) * 100 + '%';
+  $('bf').textContent = Object.keys(buff).filter(k => buff[k] > 0).map(k => PU[k][1] + ' ' + Math.ceil(buff[k]) + 's').join(' · ');
+  $('cr').textContent = credits; $('cb').textContent = combo > 1 ? 'x' + (1 + Math.floor(combo / 5) * 0.5) : '-';
+  renderer.render(scene, camera);
+}
+loop();
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+</script>
+</body>
+</html>
